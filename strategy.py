@@ -1,10 +1,11 @@
-"""v18n-2 experiment 17. Causal correction to exp15, separately recorded.
+"""v18n-2 experiment 15. Independent metals family:
 FAMILY: silver_daily_extreme_close_continuation
-Mechanism: extreme completed SI daily close-to-close return indicates macro repricing.
-Only after close is known, next trading session's 17:00 CT reopen may continue flow.
-Hypothesis: signal formed at session T close, enter direction at session T+1 reopen,
-hold through T+1 15:00, $250 stop. No current-session backfill is permitted.
-Falsification: any stressed loss/negative era or weak year coverage.
+Mechanism: an extreme completed one-day SI close-to-close move (top 5% versus trailing
+300 sessions) marks major macro repricing; next-session overnight/early flow continues it
+because hedging and positioning complete after the signal close.
+Hypothesis: enter 1 SI contract at first 17:00 CT reopen bar following the signal close,
+hold through the next 15:00 CT close, with $250 stop. Causal quantile uses past only.
+Falsification: stressed PnL or any era negative, or year coverage below robust threshold.
 """
 import numpy as np
 
@@ -17,30 +18,33 @@ def signals(panel):
     ans = {s: np.zeros(len(d), dtype=np.int64) for s, d in panel.items()}
     if "SI" not in panel:
         return ans
-    df, out = panel["SI"], ans["SI"]
+    df = panel["SI"]
+    out = ans["SI"]
     close, sec = df.close.to_numpy(), df.ct_sec.to_numpy()
-    prior_close, history, pending = None, [], 0
+    prior_close, history = None, []
     for idx in df.groupby("session", sort=False).indices.values():
-        # pending arose from prior completed session; valid from this session's reopen.
-        bars = [i for i in idx if 61200 <= sec[i] < 61500] + [i for i in idx if 30600 <= sec[i] < 54000]
-        if pending and len(bars) > 1:
-            ref = close[bars[0]]
-            for i in bars[1:]:
-                if pending * (close[i] - ref) <= -PARAMS["stop_dollars"] / SI_PV:
-                    break
-                out[i] = pending
-        pending = 0
         close_bars = [i for i in idx if 53400 <= sec[i] <= 54000]
-        if not close_bars:
+        reopen = [i for i in idx if 61200 <= sec[i] < 61500]
+        us_hours = [i for i in idx if 30600 <= sec[i] < 54000]
+        move = None
+        if prior_close is not None and close_bars:
+            move = close[close_bars[-1]] / prior_close - 1
+        if close_bars:
+            prior_close = close[close_bars[-1]]
+        if move is None:
             continue
-        session_close = close[close_bars[-1]]
-        if prior_close is not None:
-            move = session_close / prior_close - 1
-            past = np.abs(history[-PARAMS["lookback_sessions"]:])
-            if len(past) >= PARAMS["lookback_sessions"] and abs(move) >= np.quantile(past, PARAMS["quantile"]):
-                pending = int(np.sign(move))
-            history.append(move)
-        prior_close = session_close
+        past = np.abs(history[-PARAMS["lookback_sessions"]:])
+        history.append(move)
+        if len(past) < PARAMS["lookback_sessions"] or abs(move) < np.quantile(past, PARAMS["quantile"]):
+            continue
+        bars = reopen + us_hours
+        if len(bars) < 2:
+            continue
+        side, ref = int(np.sign(move)), close[bars[0]]
+        for i in bars[1:]:
+            if side * (close[i] - ref) <= -PARAMS["stop_dollars"] / SI_PV:
+                break
+            out[i] = side
     return ans
 
 
