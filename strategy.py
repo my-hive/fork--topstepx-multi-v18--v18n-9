@@ -1,38 +1,26 @@
-"""Experiment 13: USD momentum spillover into Treasury prices.
-Mechanism: dollar strength often co-moves with rate repricing via real-rate channel.
-6E (EURUSD) inverted is USD; prior-session USD direction predicts ZN next session.
+"""Experiment 15: ES opening impulse continuation.
+Mechanism: large first-hour price discovery reflects institutional imbalance; later
+participants continue direction. Use only exceptional first-hour moves, avoid overnight.
 Falsifier: stressed PnL <=0 or any era block <=0.
 """
 import numpy as np
 
-FAMILY = "fx-usd-rates-momentum-spillover"
-PARAMS = {"lookback_sessions": 3, "risk_dollars": 250}
+FAMILY = "index-opening-impulse-continuation"
+PARAMS = {"open_ct_sec": 30600, "decision_ct_sec": 34200, "exit_ct_sec": 43200, "lookback_sessions": 20, "z_threshold": 1.5, "risk_dollars": 250}
 
-def entry_risk(panel):
-    out = {s: np.full(len(df), PARAMS['risk_dollars'], dtype=float) for s,df in panel.items()}
-    return out
-
+def entry_risk(panel): return {s:np.full(len(d),PARAMS['risk_dollars'],dtype=float) for s,d in panel.items()}
 def signals(panel):
-    ans={}
-    if '6E' not in panel or 'ZN' not in panel:
-        return {s: np.zeros(len(df),dtype=np.int64) for s,df in panel.items()}
-    e=panel['6E']; z=panel['ZN']
-    # invert EURUSD to USD strength
-    e_sessions=list(e.groupby('session',sort=False).indices.values())
-    e_ret=np.array([e.close.iloc[g[-1]]-e.close.iloc[g[0]] for g in e_sessions])
-    e_sess=[str(x)[:10] for x in e.session.iloc[[g[0] for g in e_sessions]].to_numpy()]
-    usd_dir=dict(zip(e_sess,-np.sign(e_ret)))
-    z_groups=list(z.groupby('session',sort=False).indices.values())
-    z_dates=[str(x)[:10] for x in z.session.iloc[[g[0] for g in z_groups]].to_numpy()]
-    out=np.zeros(len(z),dtype=np.int64)
-    # prior 3 sessions in z own history, using usd direction from same calendar day
-    for k in range(PARAMS['lookback_sessions'],len(z_groups)):
-        date=z_dates[k]
-        # use usd signal from prior available 6E sessions before current date
-        prior=[d for d in e_sess if d<date][-PARAMS['lookback_sessions']:]
-        if len(prior)==PARAMS['lookback_sessions']:
-            sides=[usd_dir[d] for d in prior]
-            consensus=int(np.sign(sum(sides)))
-            if consensus: out[z_groups[k]]=consensus
-    ans['6E']=np.zeros(len(e),dtype=np.int64); ans['ZN']=out
-    return ans
+ ans={}
+ for s,df in panel.items():
+  out=np.zeros(len(df),dtype=np.int64)
+  if s=='ES':
+   c,sec=df.close.to_numpy(),df.ct_sec.to_numpy(); gs=list(df.groupby('session',sort=False).indices.values()); moves=[]
+   for k,g in enumerate(gs):
+    a=g[sec[g]==PARAMS['open_ct_sec']]; b=g[sec[g]==PARAMS['decision_ct_sec']]
+    move=(c[b[0]]-c[a[0]]) if len(a) and len(b) else 0.; moves.append(move)
+    if k>=PARAMS['lookback_sessions'] and len(a) and len(b):
+     w=np.array(moves[k-PARAMS['lookback_sessions']:k]); z=(move-w.mean())/(w.std() or np.inf)
+     if abs(z)>PARAMS['z_threshold']:
+      out[g[(sec[g]>=PARAMS['decision_ct_sec'])&(sec[g]<PARAMS['exit_ct_sec'])]]=int(np.sign(move))
+  ans[s]=out
+ return ans
