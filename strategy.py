@@ -1,24 +1,41 @@
-"""v17n-1 exp5. Mechanism: refinery utilization and gasoline demand create a daily
-crack-spread inventory-balance signal. When prior session RB outperforms CL, RB continuation
-at 09:00 CT captures persistent product tightness. Falsification: stressed PnL/era/year checks.
+"""v18n-2 experiment 7. Claimed independent family:
+FAMILY: gold_silver_daily_divergence_reversion
+Mechanism: GC and SI share monetary-metal macro beta. A prior-session relative-return
+divergence is often transient liquidity/positioning, so relative loser catches up during
+following liquid US hours; market-neutral pair limits dollar-beta exposure.
+Hypothesis: at 08:30 CT, long prior-day loser and short prior-day winner in GC/SI;
+hold through 15:00 CT, no threshold or parameter-selected entry.
+Falsification: negative stressed total/era PnL or <70% positive years.
 """
 import numpy as np
-FAMILY = "energy-prior-session-crack-spread-continuation"
-PARAMS = {"entry_ct_sec": 32400, "hold_minutes": 120, "stop_dollars": 280}
-FLAT=15*3600+9*60
 
-def _run(p):
- sig={s:np.zeros(len(d),dtype=np.int64) for s,d in p.items()}; risk={s:np.zeros(len(d)) for s,d in p.items()}
- rb,cl=p['RB'],p['CL']; sec=rb.ct_sec.to_numpy(); c=rb.close.to_numpy(); sess=rb.session.astype(str).to_numpy()
- rbclose=rb.close.groupby(sess).last(); clclose=cl.close.reindex(rb.index).groupby(sess).last(); spread=np.log(rbclose).diff()-np.log(clclose).diff()
- groups=list(rb.groupby(sess,sort=False).indices.values())
- for k in range(1,len(groups)):
-  v=spread.iloc[k-1]; side=0 if np.isnan(v) else int(np.sign(v)); ix=np.asarray(groups[k]); hit=ix[sec[ix]==PARAMS['entry_ct_sec']]
-  if not side or not len(hit): continue
-  e=hit[0]; stop=PARAMS['stop_dollars']/42000
-  for j in range(e,min(e+PARAMS['hold_minutes']+1,ix[-1]+1)):
-   if sec[j]>=FLAT or (j>e and side*(c[j]-c[e])<=-stop): break
-   sig['RB'][j]=side; risk['RB'][j]=PARAMS['stop_dollars']
- return sig,risk
-def signals(panel): return _run(panel)[0]
-def entry_risk(panel): return _run(panel)[1]
+FAMILY = "gold_silver_daily_divergence_reversion"
+PARAMS = {"entry_sec": 30600, "exit_sec": 54000}
+
+
+def signals(panel):
+    res = {s: np.zeros(len(d), dtype=np.int64) for s, d in panel.items()}
+    if not {"GC", "SI"} <= set(panel):
+        return res
+    g, z = panel["GC"], panel["SI"]
+    # Build only from each prior completed session's final close.
+    gc = g.groupby("session", sort=False).close.last()
+    sc = z.groupby("session", sort=False).close.last()
+    common = gc.index.intersection(sc.index)
+    gr, sr = gc.loc[common].pct_change(), sc.loc[common].pct_change()
+    side = np.sign(gr - sr).shift(1)  # positive: GC outperformed yesterday, short GC today
+    sides = dict(zip(common.astype(str), side.fillna(0).astype(int)))
+    for sym, df in (("GC", g), ("SI", z)):
+        out = res[sym]
+        sec = df.ct_sec.to_numpy()
+        for idx in df.groupby("session", sort=False).indices.values():
+            signal = sides.get(str(df.session.iloc[idx[0]]), 0)
+            for i in idx:
+                if PARAMS["entry_sec"] <= sec[i] < PARAMS["exit_sec"]:
+                    out[i] = -signal if sym == "GC" else signal
+    return res
+
+
+def entry_risk(panel):
+    # Pair's opposite legs hedge common metal beta; conservative $250/leg loss bound.
+    return {s: np.full(len(d), 250.0 if s in {"GC", "SI"} else 0.0) for s, d in panel.items()}
