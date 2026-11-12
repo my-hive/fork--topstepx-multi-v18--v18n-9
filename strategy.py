@@ -1,16 +1,24 @@
-"""Experiment 40: ES quarter-end pension allocation drift.
-Mechanism: institutional allocation and benchmark rebalancing concentrates at quarter-end.
-Long final five observed business sessions of Mar/Jun/Sep/Dec. Falsifier: PnL<=0/era<=0.
+"""Experiment 10: gold daily-trend regime continuation.
+Mechanism: macro inflation/real-rate repricing persists over multiple sessions; one
+session trend signal avoids intraday noise and churn. Prior completed sessions only.
+Falsifier: stressed PnL <=0 or any chronological era block <=0.
 """
-import numpy as np,pandas as pd
-FAMILY='index-quarter-end-allocation-drift'
-PARAMS={'final_sessions':5,'risk_dollars':250}
-def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
-def signals(p):
- a={}
- for s,d in p.items():
-  o=np.zeros(len(d),dtype=np.int64)
-  if s=='ES':
-   sess=pd.Series(d.session.astype(str).drop_duplicates()); date=pd.to_datetime(sess.str[:10]); q=date.dt.to_period('Q'); rank=date.groupby(q).cumcount(); n=date.groupby(q).transform('size'); active=((n-rank)<=5)&date.dt.month.isin([3,6,9,12]); lookup=dict(zip(sess,active));o=np.array([int(lookup[x]) for x in d.session.astype(str)],dtype=np.int64)
-  a[s]=o
- return a
+import numpy as np
+
+FAMILY = "metals-daily-trend-regime"
+PARAMS = {"lookback_sessions": 5, "risk_dollars": 250}
+
+def entry_risk(panel):
+    return {s: np.full(len(df), PARAMS['risk_dollars'], dtype=float) for s,df in panel.items()}
+
+def signals(panel):
+    ans={}
+    for s,df in panel.items():
+        out=np.zeros(len(df),dtype=np.int64)
+        if s=='MGC':
+            c=df.close.to_numpy(); gs=list(df.groupby('session',sort=False).indices.values())
+            ends=np.array([c[g[-1]] for g in gs])
+            for k in range(PARAMS['lookback_sessions'],len(gs)):
+                out[gs[k]]=int(np.sign(ends[k-1]-ends[k-PARAMS['lookback_sessions']]))
+        ans[s]=out
+    return ans
