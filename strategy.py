@@ -1,20 +1,23 @@
-"""Experiment 74: heating-oil winter commercial-demand drift.
-Mechanism: heating season distillate drawdown and distributor hedging cause persistent
-winter demand pressure. Follow prior completed-session HO direction Nov-Feb.
-Falsifier: stressed PnL <=0 or any chronological era PnL <=0.
+"""Experiment 127: crude gasoline-crack opening confirmation.
+Mechanism: matching crude and gasoline opening moves represent refinery-margin news,
+not idiosyncratic noise; crude hedge demand continues after first half-hour.
+Falsifier: PnL <=0 or any era PnL <=0.
 """
-import numpy as np,pandas as pd
-FAMILY='energy-heating-oil-winter-commercial-drift'
-PARAMS={'lookback_sessions':3,'entry_ct_sec':30600,'exit_ct_sec':43200,'risk_dollars':250}
+import numpy as np
+FAMILY='energy-crude-gasoline-crack-opening-divergence-reversion'
+PARAMS={'open_ct_sec':30600,'entry_ct_sec':32400,'exit_ct_sec':39600,'risk_dollars':250}
 def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
 def signals(p):
- a={}
- for s,d in p.items():
-  o=np.zeros(len(d),dtype=np.int64)
-  if s=='HO':
-   c,t=d.close.to_numpy(),d.ct_sec.to_numpy();gs=list(d.groupby('session',sort=False).indices.values());r=np.array([c[g[-1]]-c[g[0]] for g in gs]);m=pd.to_datetime(d.session.iloc[[g[0] for g in gs]].astype(str).str[:10]).dt.month.to_numpy()
-   for k in range(3,len(gs)):
-    if m[k] in [11,12,1,2]:
-     g=gs[k];o[g[(t[g]>=30600)&(t[g]<43200)]]=int(np.sign(r[k-3:k].sum()))
-  a[s]=o
+ a={s:np.zeros(len(d),dtype=np.int64)for s,d in p.items()}
+ if not all(s in p for s in ('CL','RB')):return a
+ q={}
+ for s in ('CL','RB'):
+  d=p[s];c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
+  for x,g in d.groupby('session',sort=False).indices.items():
+   u=g[t[g]==30600];v=g[t[g]==32400]
+   if len(u)and len(v):q.setdefault(x,{})[s]=int(np.sign(c[v[0]]-c[u[0]]))
+ d=p['CL'];t=d.ct_sec.to_numpy()
+ for x,g in d.groupby('session',sort=False).indices.items():
+  z=q.get(x,{})
+  if z.get('CL',0) and z.get('CL')==z.get('RB',0):a['CL'][g[(t[g]>=32400)&(t[g]<39600)]]=-z['CL']
  return a
