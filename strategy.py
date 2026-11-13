@@ -1,19 +1,25 @@
-"""Exp143: synchronized ES/NQ opening shock overextends; MNQ reverts. Falsifier PnL/era <=0."""
+"""v18n-2 experiment 62.
+FAMILY: nasdaq_monday_positive_feedback
+Mechanism: positive Friday positioning persists into Monday as systematic trend allocators and
+weekend-flow hedgers add exposure after a completed positive session.
+Hypothesis: after completed positive Friday, long NQ Monday 17:00 CT through 15:00 CT, $250
+stop. Falsification: stressed PnL, era, or yearly robustness failure.
+"""
 import numpy as np
-FAMILY='index-micro-nasdaq-crossconfirm-opening-continuation'
-PARAMS={'open_ct_sec':30600,'entry_ct_sec':32400,'exit_ct_sec':39600,'risk_dollars':250}
-def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
-def signals(p):
- a={s:np.zeros(len(d),dtype=np.int64)for s,d in p.items()}
- if not all(s in p for s in ('MES','MNQ')):return a
- q={}
- for s in ('MES','MNQ'):
-  d=p[s];c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
-  for x,g in d.groupby('session',sort=False).indices.items():
-   u=g[t[g]==30600];v=g[t[g]==32400]
-   if len(u)and len(v):q.setdefault(x,{})[s]=int(np.sign(c[v[0]]-c[u[0]]))
- d=p['MNQ'];t=d.ct_sec.to_numpy()
- for x,g in d.groupby('session',sort=False).indices.items():
-  z=q.get(x,{})
-  if z.get('MES',0) and z.get('MES')==z.get('MNQ',0):a['MNQ'][g[(t[g]>=32400)&(t[g]<39600)]]=z['MNQ']
- return a
+import pandas as pd
+FAMILY="nasdaq_monday_positive_feedback";PARAMS={"stop_dollars":250}
+def signals(panel):
+ ans={s:np.zeros(len(d),dtype=np.int64) for s,d in panel.items()}
+ if 'NQ' not in panel:return ans
+ d=panel['NQ'];o=ans['NQ'];c,t=d.close.to_numpy(),d.ct_sec.to_numpy();days=list(d.groupby('session',sort=False).indices.values());rets=[]
+ for n,ix in enumerate(days):
+  day=pd.Timestamp(d.session.iloc[ix[0]]);side=day.dayofweek==0 and n and rets[-1]>0
+  bars=[i for i in ix if 61200<=t[i]<61500]+[i for i in ix if 30600<=t[i]<54000]
+  if side and len(bars)>1:
+   ref=c[bars[0]]
+   for i in bars[1:]:
+    if c[i]-ref<=-12.5:break
+    o[i]=1
+  rets.append(c[ix[-1]]/c[ix[0]]-1)
+ return ans
+def entry_risk(panel):return {s:np.full(len(d),290. if s=='NQ' else 0.) for s,d in panel.items()}
