@@ -1,40 +1,26 @@
-"""v18n-2 experiment 123.
-FAMILY: equity_index_lunch_breadth_zscore_quorum
-Mechanism: aligned lunch repricing across >=2 US equity indices marks broad institutional execution
-that continues into closing liquidity. Volatility-normalised trigger (z vs trailing 60-session std)
-adapts to regime and fires earlier in sample than a 120-session percentile warm-up.
-Hypothesis: follow quorum members 12:01-15:00 when |z|>=1.75; $250 stop.
-Falsification: stressed PnL, era, or yearly robustness failure; exp120 comparison for year coverage.
+"""v18n-2 experiment 118.
+FAMILY: spx_midday_extreme_execution_continuation
+Mechanism: exceptional late-lunch SPX repricing reflects institutional execution that persists
+through closing-liquidity demand.
+Hypothesis: follow causal trailing-120-session top-5% 11:30-12:00 ES move, 12:01-15:00; $250 stop.
+Falsification: stressed PnL, era, or yearly robustness failure.
 """
 import numpy as np
 import pandas as pd
-FAMILY="equity_index_lunch_breadth_zscore_quorum";PARAMS={"lookback_sessions":60,"z_threshold":1.75,"quorum":2}
-STOP={'ES':5.,'NQ':12.5,'YM':50.,'RTY':5.}
+FAMILY="spx_midday_extreme_execution_continuation";PARAMS={"lookback_sessions":120,"quantile":.95,"stop_dollars":250}
 def signals(panel):
  ans={s:np.zeros(len(d),dtype=np.int64) for s,d in panel.items()}
- info={}
- for s in panel:
-  d=panel[s];c,t=d.close.to_numpy(),d.ct_sec.to_numpy();hist=[]
-  for day,ix in d.groupby('session',sort=False).indices.items():
-   pre=[i for i in ix if 39600<=t[i]<43200]
-   if len(pre)>1:
-    m=c[pre[-1]]-c[pre[0]]
-    if len(hist)>=60:
-     sd=np.std(hist[-60:])
-     if sd>0 and abs(m)>=1.75*sd:info.setdefault(str(day),{})[s]=np.sign(m)
-    hist.append(m)
- for s in panel:
-  d=panel[s];c,t=d.close.to_numpy(),d.ct_sec.to_numpy();out=ans[s]
-  for day,ix in d.groupby('session',sort=False).indices.items():
-   z=info.get(str(day),{})
-   if s not in z:continue
-   side=z[s]
-   if sum(v==side for v in z.values())<2:continue
-   bars=[i for i in ix if 43260<=t[i]<54000]
-   if not bars:continue
-   ref=c[bars[0]]
-   for i in bars:
-    if side*(c[i]-ref)<=-STOP[s]:break
-    out[i]=side
+ if 'ES' not in panel:return ans
+ d=panel['ES'];out=ans['ES'];c,t=d.close.to_numpy(),d.ct_sec.to_numpy();hist=[]
+ for ix in d.groupby('session',sort=False).indices.values():
+  pre=[i for i in ix if 41400<=t[i]<43200];bars=[i for i in ix if 43260<=t[i]<54000]
+  if len(pre)>1:
+   move=c[pre[-1]]-c[pre[0]];threshold=np.quantile(np.abs(hist[-120:]),.95) if len(hist)>=120 else np.inf
+   if abs(move)>=threshold and bars:
+    side=np.sign(move);ref=c[bars[0]]
+    for i in bars:
+     if side*(c[i]-ref)<=-5:break
+     out[i]=side
+   hist.append(move)
  return ans
-def entry_risk(panel):return {s:np.full(len(d),250.) for s,d in panel.items()}
+def entry_risk(panel):return {s:np.full(len(d),250. if s=='ES' else 0.) for s,d in panel.items()}
