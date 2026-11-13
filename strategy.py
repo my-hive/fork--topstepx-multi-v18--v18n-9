@@ -1,20 +1,19 @@
-"""Experiment 31: NQ cash-open liquidity continuation.
-Mechanism: premarket institutional positioning into US cash open reveals imbalance;
-cash-market participation continues direction. Observe 08:00-08:30 CT, trade 08:30-10:30.
-Falsifier: stressed total PnL or any chronological era PnL nonpositive.
+"""Experiment 81: soybean commercial inventory reversion.
+Mechanism: soybean processor and elevator hedging pushes prior-day price moves beyond
+cash-market equilibrium; next US session reverses as crush demand absorbs inventory.
+Falsifier: stressed PnL <=0 or any chronological era PnL <=0.
 """
 import numpy as np
-FAMILY = 'index-cash-open-premarket-impulse'
-PARAMS = {'observe_ct_sec': 28800, 'entry_ct_sec': 30600, 'exit_ct_sec': 37800, 'risk_dollars': 250}
-def entry_risk(panel): return {s: np.full(len(d), PARAMS['risk_dollars'], dtype=float) for s,d in panel.items()}
-def signals(panel):
-    ans={}
-    for s,d in panel.items():
-        out=np.zeros(len(d),dtype=np.int64)
-        if s=='NQ':
-            c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
-            for g in d.groupby('session',sort=False).indices.values():
-                a=g[t[g]==PARAMS['observe_ct_sec']]; b=g[t[g]==PARAMS['entry_ct_sec']]
-                if len(a) and len(b): out[g[(t[g]>=PARAMS['entry_ct_sec'])&(t[g]<PARAMS['exit_ct_sec'])]]=int(np.sign(c[b[0]]-c[a[0]]))
-        ans[s]=out
-    return ans
+FAMILY='grains-soy-commercial-inventory-reversion'
+PARAMS={'entry_ct_sec':30600,'exit_ct_sec':46800,'risk_dollars':250}
+def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
+def signals(p):
+ a={}
+ for s,d in p.items():
+  o=np.zeros(len(d),dtype=np.int64)
+  if s=='ZS':
+   c,t=d.close.to_numpy(),d.ct_sec.to_numpy();gs=list(d.groupby('session',sort=False).indices.values());r=np.array([c[g[-1]]-c[g[0]] for g in gs])
+   for k in range(1,len(gs)):
+    g=gs[k];o[g[(t[g]>=30600)&(t[g]<46800)]]=-int(np.sign(r[k-1]))
+  a[s]=o
+ return a
