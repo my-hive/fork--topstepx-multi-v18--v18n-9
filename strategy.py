@@ -1,25 +1,25 @@
-"""Experiment 159: micro equity calendar-flow portfolio.
-Mechanism: Friday MES basket/ETF opening flow and MNQ overnight-to-cash price discovery
-are distinct timed institutional flows. Combining low-exposure micro legs may diversify
-daily PnL and raise combine passes without altering each causal mechanism.
-Falsifier: nonpositive primary statistic, any era loss, risk breach, or prefix failure.
+"""v18n-2 experiment 79.
+FAMILY: heatingoil_monday_priorloss_hedging_reversal
+Mechanism: after prior-session losses, Monday physical distributor hedging reverses residual
+opening inventory positioning once US desks arrive.
+Hypothesis: short HO Monday 10:00-15:00 CT only after prior HO session loss, $250 stop.
+Falsification: stressed PnL, era, or yearly robustness failure.
 """
-import numpy as np,pandas as pd
-FAMILY='index-micro-friday-basket-plus-overnight-discovery'
-PARAMS={'open_ct_sec':30600,'open_end_ct_sec':32400,'overnight_start_ct_sec':7200,'overnight_exit_ct_sec':37800,'risk_dollars':250}
-def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
-def signals(p):
- a={}
- for s,d in p.items():
-  o=np.zeros(len(d),dtype=np.int64);c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
-  if s=='MES':
-   friday=(pd.to_datetime(d.session.astype(str).str[:10]).dt.weekday==4).to_numpy()
-   for g in d.groupby('session',sort=False).indices.values():
-    x=g[t[g]==30600];y=g[t[g]==32400]
-    if len(x)and len(y)and friday[g[0]]:o[g[(t[g]>=32400)&(t[g]<46800)]]=int(np.sign(c[y[0]]-c[x[0]]))
-  if s=='MNQ':
-   for g in d.groupby('session',sort=False).indices.values():
-    x=g[t[g]==7200];y=g[t[g]==30600]
-    if len(x)and len(y):o[g[(t[g]>=30600)&(t[g]<37800)]]=int(np.sign(c[y[0]]-c[x[0]]))
-  a[s]=o
- return a
+import numpy as np
+import pandas as pd
+FAMILY="heatingoil_monday_priorloss_hedging_reversal";PARAMS={"stop_dollars":250}
+def signals(panel):
+ ans={s:np.zeros(len(d),dtype=np.int64) for s,d in panel.items()}
+ if 'HO' not in panel:return ans
+ d=panel['HO'];o=ans['HO'];c,t=d.close.to_numpy(),d.ct_sec.to_numpy();days=list(d.groupby('session',sort=False).indices.values());rets=[]
+ for n,ix in enumerate(days):
+  side=pd.Timestamp(d.session.iloc[ix[0]]).dayofweek==0 and n and rets[-1]<0
+  bars=[i for i in ix if 36000<=t[i]<54000]
+  if side and len(bars)>1:
+   ref=c[bars[0]]
+   for i in bars[1:]:
+    if ref-c[i]<=-.006:break
+    o[i]=-1
+  rets.append(c[ix[-1]]/c[ix[0]]-1)
+ return ans
+def entry_risk(panel):return {s:np.full(len(d),290. if s=='HO' else 0.) for s,d in panel.items()}
