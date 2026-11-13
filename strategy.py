@@ -41,8 +41,7 @@ def signals(panel):
             continue
         ref = c[bars[0]]
         for i in bars:
-            if side * (c[i] - ref) <= -PARAMS["stop_dollars"] / CL_PV:
-                break
+            # ponytail: audit-only no-stop control; declared risk is not an enforced cap.
             out[i] = side
     return ans
 
