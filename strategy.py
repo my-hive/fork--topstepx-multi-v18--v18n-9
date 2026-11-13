@@ -1,20 +1,24 @@
-"""Experiment 104: micro Nasdaq opening shock continuation.
-Mechanism: exceptional cash-open NQ price discovery reflects institutional imbalance;
-only high-range shocks continue after first half hour. MNQ tests lower-cost contract.
-Falsifier: stressed PnL <=0 or any era PnL <=0.
+"""v18n-2 experiment 78.
+FAMILY: heatingoil_monday_late_hedging_reversal
+Mechanism: US-session distributor hedging reverses Monday opening inventory positioning after
+physical desks arrive; exclude overnight inventory noise.
+Hypothesis: short HO Monday 10:00-15:00 CT, $250 stop. Falsification: stressed PnL, era, or
+yearly robustness failure.
 """
 import numpy as np
-FAMILY='index-micro-nasdaq-opening-shock-reversal'
-PARAMS={'open_ct_sec':30600,'entry_ct_sec':32400,'exit_ct_sec':39600,'lookback_sessions':20,'risk_dollars':250}
-def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
-def signals(p):
- a={}
- for s,d in p.items():
-  o=np.zeros(len(d),dtype=np.int64)
-  if s=='MNQ':
-   c,h,l,t=d.close.to_numpy(),d.high.to_numpy(),d.low.to_numpy(),d.ct_sec.to_numpy();gs=list(d.groupby('session',sort=False).indices.values());r=[]
-   for k,g in enumerate(gs):
-    x=g[(t[g]>=30600)&(t[g]<32400)];v=(h[x].max()-l[x].min()) if len(x)else 0.;r.append(v)
-    if k>=20 and len(x) and v>2*np.median(r[k-20:k]):o[g[(t[g]>=32400)&(t[g]<39600)]]=-int(np.sign(c[x[-1]]-c[x[0]]))
-  a[s]=o
- return a
+import pandas as pd
+FAMILY="heatingoil_monday_late_hedging_reversal";PARAMS={"stop_dollars":250}
+def signals(panel):
+ ans={s:np.zeros(len(d),dtype=np.int64) for s,d in panel.items()}
+ if 'HO' not in panel:return ans
+ d=panel['HO'];o=ans['HO'];c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
+ for ix in d.groupby('session',sort=False).indices.values():
+  if pd.Timestamp(d.session.iloc[ix[0]]).dayofweek!=0:continue
+  bars=[i for i in ix if 36000<=t[i]<54000]
+  if len(bars)<2:continue
+  ref=c[bars[0]]
+  for i in bars[1:]:
+   if ref-c[i]<=-.006:break
+   o[i]=-1
+ return ans
+def entry_risk(panel):return {s:np.full(len(d),290. if s=='HO' else 0.) for s,d in panel.items()}
