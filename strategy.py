@@ -1,19 +1,54 @@
-"""Experiment 30: natural-gas storage-report reversal.
-Mechanism: EIA Thursday gas storage number can overextend intraday; fade initial move.
-Use Thursday proxy and prior completed-session direction. Falsifier: nonpositive PnL/era.
+"""v18n-2 experiment 2 (exp 1 churned per-minute; logged as failed).
+FAMILY: metals_us_opening_overnight_unwind
+Mechanism: thin Asia/London gold moves are partly liquidity-driven; deep COMEX open liquidity unwinds them.
+Hypothesis: fade completed prior-60min MGC move once at 08:30 CT, hold to 11:00 CT, vol stop, risk-sized.
+Falsification: stressed PnL not positive in all 3 eras or <70% positive years.
 """
-import numpy as np,pandas as pd
-FAMILY='energy-gas-storage-report-reversal'
-PARAMS={'entry_ct_sec':30600,'exit_ct_sec':43200,'risk_dollars':250}
-def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
-def signals(p):
- a={}
- for s,d in p.items():
-  o=np.zeros(len(d),dtype=np.int64)
-  if s=='NG':
-   c,t=d.close.to_numpy(),d.ct_sec.to_numpy();gs=list(d.groupby('session',sort=False).indices.values());dt=pd.to_datetime(d.session.iloc[[g[0] for g in gs]].astype(str).str[:10]);r=np.array([c[g[-1]]-c[g[0]] for g in gs])
-   for k in range(1,len(gs)):
-    if dt.iloc[k].weekday()==3:
-     side=-int(np.sign(r[k-1]));g=gs[k];o[g[(t[g]>=30600)&(t[g]<43200)]]=side
-  a[s]=o
- return a
+import numpy as np
+
+FAMILY = "metals_us_opening_overnight_unwind"
+PARAMS = {"lookback_min": 60, "vol_window": 240, "stop_vol_mult": 1.0, "exit_ct_sec": 39600, "risk_budget": 280}
+SYM = "MGC"
+PV = 10.0
+ENTRY_SEC = 30600  # 08:30 CT
+
+
+def _plan(df):
+    """Per-row desired target and per-contract risk, causal."""
+    n = len(df)
+    out = np.zeros(n, dtype=np.int64)
+    risk = np.zeros(n)
+    close, sec = df.close.to_numpy(), df.ct_sec.to_numpy()
+    lb, vw = PARAMS["lookback_min"], PARAMS["vol_window"]
+    for idx in df.groupby("session", sort=False).indices.values():
+        c, s = close[idx], sec[idx]
+        # first bar at/after entry time, if bar present within 5 minutes
+        hits = np.nonzero((s >= ENTRY_SEC) & (s < ENTRY_SEC + 300))[0]
+        if not len(hits) or hits[0] < max(lb, vw):
+            continue
+        j = hits[0]
+        move = c[j] - c[j - lb]
+        r = np.diff(c[j - vw:j + 1])
+        stop = PARAMS["stop_vol_mult"] * r.std() * np.sqrt(lb)
+        per = stop * PV + 2.0  # + slippage buffer
+        n_c = int(min(50, PARAMS["risk_budget"] // per))
+        if move == 0 or n_c < 1 or stop <= 0:
+            continue
+        side = -int(np.sign(move))
+        ref, pos = c[j], 0
+        for k in range(j, len(idx)):
+            if s[k] >= PARAMS["exit_ct_sec"]:
+                break
+            if k > j and side * (c[k] - ref) <= -stop:
+                break
+            out[idx[k]] = side * n_c
+            risk[idx[k]] = per
+    return out, risk
+
+
+def signals(panel):
+    return {s: (_plan(d)[0] if s == SYM else np.zeros(len(d), dtype=np.int64)) for s, d in panel.items()}
+
+
+def entry_risk(panel):
+    return {s: (_plan(d)[1] if s == SYM else np.zeros(len(d))) for s, d in panel.items()}
