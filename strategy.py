@@ -1,41 +1,40 @@
-"""v18n-2 experiment 20. Independent metals trend/regime family:
-FAMILY: gold_daily_trend_regime_long
-Mechanism: gold's medium-horizon risk premium is state-dependent; trend-following uses
-prior 20-session sign, intended to hold during persistent macro regimes and avoid
-mean-reverting drawdown states.
-Hypothesis: if prior completed 20-session return is positive, long 1 GC contract from
-17:00 CT reopen through 15:00 CT next session, $250 stop. One contract.
-Falsification: stressed PnL/any era negative or <70% years.
+"""v18n-2 experiment 23. Claimed feed #3911.
+FAMILY: silver_morning_volume_anomaly_continuation
+Mechanism: an abnormal completed 08:30-09:30 CT SI volume hour identifies information
+arrival or institutional flow. Its price direction continues as remaining execution occurs.
+Hypothesis: if hour volume is top 5% of prior 60 sessions, trade its direction 09:31->15:00,
+$250 stop. All signal bars complete before entry. Falsification: stressed PnL/era negative.
 """
 import numpy as np
 
-FAMILY = "gold_daily_trend_regime_long"
-PARAMS = {"lookback_sessions": 20, "stop_dollars": 250}
-GC_PV = 100.0
+FAMILY = "silver_morning_volume_anomaly_continuation"
+PARAMS = {"quantile": 0.95, "lookback_sessions": 60, "entry_sec": 34260, "exit_sec": 54000, "stop_dollars": 250}
+SI_PV = 5000.0
 
 
 def signals(panel):
-    ans = {}
-    for sym, df in panel.items():
-        out = np.zeros(len(df), dtype=np.int64)
-        if sym == "GC":
-            close, sec = df.close.to_numpy(), df.ct_sec.to_numpy()
-            closes = []
-            for idx in df.groupby("session", sort=False).indices.values():
-                bars = [i for i in idx if 61200 <= sec[i] < 61500] + [i for i in idx if 30600 <= sec[i] < 54000]
-                active = len(closes) >= PARAMS["lookback_sessions"] and closes[-1] / closes[-PARAMS["lookback_sessions"]] > 1
-                close_bars = [i for i in idx if 53400 <= sec[i] <= 54000]
-                if close_bars:
-                    closes.append(close[close_bars[-1]])
-                if active and len(bars) > 1:
-                    ref = close[bars[0]]
-                    for i in bars[1:]:
-                        if close[i] - ref <= -PARAMS["stop_dollars"] / GC_PV:
-                            break
-                        out[i] = 1
-        ans[sym] = out
+    ans = {s: np.zeros(len(d), dtype=np.int64) for s, d in panel.items()}
+    if "SI" not in panel:
+        return ans
+    df, out = panel["SI"], ans["SI"]
+    close, vol, sec = df.close.to_numpy(), df.volume.to_numpy(), df.ct_sec.to_numpy()
+    history = []
+    for idx in df.groupby("session", sort=False).indices.values():
+        hour = [i for i in idx if 30600 <= sec[i] < 34200]
+        entry = [i for i in idx if PARAMS["entry_sec"] <= sec[i] < PARAMS["exit_sec"]]
+        if not hour:
+            continue
+        volume = vol[hour].sum()
+        past = history[-PARAMS["lookback_sessions"]:]
+        if len(past) >= PARAMS["lookback_sessions"] and volume >= np.quantile(past, PARAMS["quantile"]) and entry:
+            side, ref = int(np.sign(close[hour[-1]] - close[hour[0]])), close[entry[0]]
+            for i in entry:
+                if side * (close[i] - ref) <= -PARAMS["stop_dollars"] / SI_PV:
+                    break
+                out[i] = side
+        history.append(volume)
     return ans
 
 
 def entry_risk(panel):
-    return {s: np.full(len(d), 290.0 if s == "GC" else 0.0) for s, d in panel.items()}
+    return {s: np.full(len(d), 290.0 if s == "SI" else 0.0) for s, d in panel.items()}
