@@ -1,50 +1,49 @@
-"""v18n-2 experiment 22. Claimed feed #8058.
-FAMILY: silver_stalled_trend_reversal
-Mechanism: an extreme completed daily SI move that is followed by a near-flat session
-indicates repricing failed to attract continuation; next-session position unwinds reverse it.
-Hypothesis: after an SI top-5% daily move followed by a session whose absolute return is
-less than 10% of initial move, enter opposite stalled-day direction at following 17:00 CT
-reopen; exit 15:00 CT; $250 stop. All state comes from completed sessions.
-Falsification: negative stressed PnL/any era or inadequate positive years.
+"""v18n-2 experiment 10 (metals pivot).
+FAMILY: metals_extreme_overnight_continuation
+Mechanism: an overnight (17:00-08:30 CT) move >=3x its trailing typical size usually
+reflects macro/news repricing; US cash-hour participants take time to absorb it, so the
+move continues intraday. Small moves are noise and are skipped.
+Hypothesis: GC/SI/PL, |overnight return / median |overnight| of prior 60 sessions| >= 3 ->
+trade in move direction from first bar >= 09:35 CT (past the 08:30-09:30 entry-diversity
+window), $250 stop, flat 15:00 CT. Pre-screen (08:30 entry, gross): GC +$102, SI +$92, PL +$63/trade.
+Falsification: stressed PnL negative, any era negative, or <70% positive years.
 """
 import numpy as np
 
-FAMILY = "silver_stalled_trend_reversal"
-PARAMS = {"quantile": 0.95, "lookback_sessions": 300, "stall_ratio": 0.10, "stop_dollars": 250}
-SI_PV = 5000.0
+FAMILY = "metals_extreme_overnight_continuation"
+PARAMS = {"z_min": 3.0, "vol_sessions": 60, "entry_sec": 34500, "exit_sec": 54000, "stop_dollars": 250}
+PV = {"GC": 100.0, "SI": 5000.0, "PL": 50.0}
+
+
+def _plan(df, pv):
+    out = np.zeros(len(df), dtype=np.int64)
+    c, s = df.close.to_numpy(), df.ct_sec.to_numpy()
+    stop = PARAMS["stop_dollars"] / pv
+    hist = []
+    for idx in df.groupby("session", sort=False).indices.values():
+        pre = [i for i in idx if s[i] >= 61200 or s[i] < 30540]
+        post = [i for i in idx if PARAMS["entry_sec"] <= s[i] < PARAMS["exit_sec"]]
+        if len(pre) < 2:
+            continue
+        on = c[pre[-1]] / c[pre[0]] - 1
+        past = hist[-PARAMS["vol_sessions"]:]
+        hist.append(abs(on))  # appended after use of past only
+        if len(past) < PARAMS["vol_sessions"] or not post:
+            continue
+        typ = np.median(past)
+        if typ <= 0 or abs(on) < PARAMS["z_min"] * typ:
+            continue
+        side, ref = int(np.sign(on)), c[post[0]]
+        for i in post:
+            if side * (c[i] - ref) <= -stop:
+                break
+            out[i] = side
+    return out
 
 
 def signals(panel):
-    ans = {s: np.zeros(len(d), dtype=np.int64) for s, d in panel.items()}
-    if "SI" not in panel:
-        return ans
-    df, out = panel["SI"], ans["SI"]
-    close, sec = df.close.to_numpy(), df.ct_sec.to_numpy()
-    prior_close, history, candidate, pending = None, [], 0.0, 0
-    for idx in df.groupby("session", sort=False).indices.values():
-        bars = [i for i in idx if 61200 <= sec[i] < 61500] + [i for i in idx if 30600 <= sec[i] < 54000]
-        if pending and len(bars) > 1:
-            ref = close[bars[0]]
-            for i in bars[1:]:
-                if pending * (close[i] - ref) <= -PARAMS["stop_dollars"] / SI_PV:
-                    break
-                out[i] = pending
-        pending = 0
-        end = [i for i in idx if 53400 <= sec[i] <= 54000]
-        if not end:
-            continue
-        this_close = close[end[-1]]
-        if prior_close is not None:
-            ret = this_close / prior_close - 1
-            # Candidate was established at prior completed close. This close confirms stall.
-            if candidate and abs(ret) < PARAMS["stall_ratio"] * abs(candidate):
-                pending = -int(np.sign(candidate))
-            past = np.abs(history[-PARAMS["lookback_sessions"]:])
-            candidate = ret if len(past) >= PARAMS["lookback_sessions"] and abs(ret) >= np.quantile(past, PARAMS["quantile"]) else 0.0
-            history.append(ret)
-        prior_close = this_close
-    return ans
+    return {s: (_plan(d, PV[s]) if s in PV else np.zeros(len(d), dtype=np.int64)) for s, d in panel.items()}
 
 
 def entry_risk(panel):
-    return {s: np.full(len(d), 290.0 if s == "SI" else 0.0) for s, d in panel.items()}
+    return {s: np.full(len(d), PARAMS["stop_dollars"] + 40.0 if s in PV else 0.0) for s, d in panel.items()}
