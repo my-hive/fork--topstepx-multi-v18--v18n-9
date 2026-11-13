@@ -1,22 +1,25 @@
-"""Experiment 19: crude inventory-session impulse continuation.
-Mechanism: EIA weekly petroleum data causes persistent inventory repricing; CL prior-
-session impulse continues through US session. Same mechanism family different asset/cost.
+"""Experiment 20: FX overnight carry/liquidity capture.
+Mechanism: overnight G10 liquidity premium and rate-differential carry produce drift
+when overnight regime established by prior completed session. Continuous 6E reduces
+re-entry churn. Stop modeled as causal trailing adverse move from entry.
 Falsifier: stressed PnL <=0 or any era block <=0.
 """
 import numpy as np
-FAMILY='energy-inventory-session-impulse-continuation'
-PARAMS={'lookback_sessions':3,'entry_ct_sec':30600,'exit_ct_sec':46800,'risk_dollars':250}
+FAMILY='fx-overnight-carry-liquidity-capture'
+PARAMS={'lookback_sessions':5,'stop_points':0.0015,'risk_dollars':250}
 def entry_risk(panel): return {s:np.full(len(d),PARAMS['risk_dollars'],dtype=float) for s,d in panel.items()}
 def signals(panel):
  ans={}
  for s,d in panel.items():
   o=np.zeros(len(d),dtype=np.int64)
-  if s=='CL':
+  if s=='6E':
    c=d.close.to_numpy(); gs=list(d.groupby('session',sort=False).indices.values())
-   rets=np.array([c[g[-1]]-c[g[0]] for g in gs]); t=d.ct_sec.to_numpy()
+   rets=np.array([c[g[-1]]-c[g[0]] for g in gs]); pos=0; basis=0.
    for k in range(PARAMS['lookback_sessions'],len(gs)):
-    side=int(np.sign(rets[k-1]+rets[k-2]+rets[k-3]))
-    if side:
-     g=gs[k]; o[g[(t[g]>=PARAMS['entry_ct_sec'])&(t[g]<PARAMS['exit_ct_sec'])]]=side
+    side=int(np.sign(rets[k-1:k].sum()))
+    for i in gs[k]:
+     if pos and abs(c[i]-basis)>=PARAMS['stop_points']: pos=0
+     if not pos and side: pos=side; basis=c[i]
+     o[i]=pos
   ans[s]=o
  return ans
