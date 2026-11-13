@@ -1,25 +1,19 @@
-"""v18n-2 experiment 62.
-FAMILY: nasdaq_monday_positive_feedback
-Mechanism: positive Friday positioning persists into Monday as systematic trend allocators and
-weekend-flow hedgers add exposure after a completed positive session.
-Hypothesis: after completed positive Friday, long NQ Monday 17:00 CT through 15:00 CT, $250
-stop. Falsification: stressed PnL, era, or yearly robustness failure.
+"""Experiment 135: micro crude EIA shock continuation.
+Mechanism: weekly inventory surprise creates information shock; initial response continues
+as physical hedgers adjust. MCL tests smaller contract cost. Falsifier: PnL<=0 or era<=0.
 """
-import numpy as np
-import pandas as pd
-FAMILY="nasdaq_monday_positive_feedback";PARAMS={"stop_dollars":250}
-def signals(panel):
- ans={s:np.zeros(len(d),dtype=np.int64) for s,d in panel.items()}
- if 'NQ' not in panel:return ans
- d=panel['NQ'];o=ans['NQ'];c,t=d.close.to_numpy(),d.ct_sec.to_numpy();days=list(d.groupby('session',sort=False).indices.values());rets=[]
- for n,ix in enumerate(days):
-  day=pd.Timestamp(d.session.iloc[ix[0]]);side=day.dayofweek==0 and n and rets[-1]>0
-  bars=[i for i in ix if 61200<=t[i]<61500]+[i for i in ix if 30600<=t[i]<54000]
-  if side and len(bars)>1:
-   ref=c[bars[0]]
-   for i in bars[1:]:
-    if c[i]-ref<=-12.5:break
-    o[i]=1
-  rets.append(c[ix[-1]]/c[ix[0]]-1)
- return ans
-def entry_risk(panel):return {s:np.full(len(d),290. if s=='NQ' else 0.) for s,d in panel.items()}
+import numpy as np,pandas as pd
+FAMILY='energy-micro-crude-eia-shock-continuation'
+PARAMS={'open_ct_sec':30600,'entry_ct_sec':32400,'exit_ct_sec':39600,'risk_dollars':250}
+def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
+def signals(p):
+ a={}
+ for s,d in p.items():
+  o=np.zeros(len(d),dtype=np.int64)
+  if s=='MCL':
+   c,t=d.close.to_numpy(),d.ct_sec.to_numpy();wd=pd.to_datetime(d.session.astype(str).str[:10]).dt.weekday.to_numpy()
+   for g in d.groupby('session',sort=False).indices.values():
+    x=g[t[g]==30600];y=g[t[g]==32400]
+    if len(x)and len(y)and wd[g[0]]==2:o[g[(t[g]>=32400)&(t[g]<39600)]]=int(np.sign(c[y[0]]-c[x[0]]))
+  a[s]=o
+ return a
