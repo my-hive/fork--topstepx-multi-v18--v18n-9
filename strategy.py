@@ -1,23 +1,25 @@
-"""Experiment 103: silver dollar-confirmed US-opening continuation.
-Mechanism: dollar move confirms macro component of precious-metal opening imbalance;
-SI continues only when inverse M6E direction agrees, filtering local liquidity shocks.
-Falsifier: stressed PnL <=0 or any era PnL <=0.
+"""Friday diversified index basket-flow capacity audit.
+Shared Friday MES/MNQ opening flow; one of each actual micro contract, no synthetic scaling.
+Falsify if entry risk, primary, or economics fail.
 """
 import numpy as np
-FAMILY='metals-silver-dollar-confirmed-opening-continuation'
-PARAMS={'open_ct_sec':30600,'entry_ct_sec':32400,'exit_ct_sec':39600,'risk_dollars':250}
-def entry_risk(p):return{s:np.full(len(d),250.,dtype=float)for s,d in p.items()}
-def signals(p):
- a={s:np.zeros(len(d),dtype=np.int64)for s,d in p.items()}
- if not all(s in p for s in ('SI','M6E')):return a
- sig={}
- for s in ('SI','M6E'):
-  d=p[s];c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
-  for sess,g in d.groupby('session',sort=False).indices.items():
-   x=g[t[g]==30600];y=g[t[g]==32400]
-   if len(x)and len(y):sig.setdefault(sess,{})[s]=int(np.sign(c[y[0]]-c[x[0]]))
- d=p['SI'];t=d.ct_sec.to_numpy()
- for sess,g in d.groupby('session',sort=False).indices.items():
-  q=sig.get(sess,{})
-  if q.get('SI',0) and q.get('SI')==-q.get('M6E',0):a['SI'][g[(t[g]>=32400)&(t[g]<39600)]]=q['SI']
- return a
+import pandas as pd
+FAMILY='equity-friday-opening-flow-portfolio-capacity-audit'
+PARAMS={'entry':32400,'exit':50400,'mnq_stop':100.,'mes_stop':10.}
+def entry_risk(panel):
+ return {s:np.full(len(d),205. if s=='MNQ' else 55. if s=='MES' else 301.) for s,d in panel.items()}
+def signals(panel):
+ out={s:np.zeros(len(d),dtype=np.int64) for s,d in panel.items()}
+ for s,d in panel.items():
+  if s not in ('MNQ','MES'):continue
+  c=d.close.to_numpy();t=d.ct_sec.to_numpy();stop=PARAMS['mnq_stop'] if s=='MNQ' else PARAMS['mes_stop']
+  for sess,ix in d.groupby('session',sort=False).indices.items():
+   if pd.Timestamp(sess).day_of_week!=4:continue
+   a=np.where(t[ix]==30540)[0];b=np.where(t[ix]==PARAMS['entry']-60)[0]
+   if not len(a) or not len(b):continue
+   side=int(np.sign(c[ix[b[0]]]-c[ix[a[0]]]));ref=c[ix[b[0]]]
+   if side:
+    for r in ix[b[0]+1:]:
+     if t[r]>=PARAMS['exit'] or (c[r]-ref)*side<=-stop:break
+     out[s][r]=side
+ return out
