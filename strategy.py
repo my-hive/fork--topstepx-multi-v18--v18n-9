@@ -1,57 +1,50 @@
-"""v18n-2 experiment 14. Claimed independent metals family:
-FAMILY: metals_two_day_extreme_trend_continuation
-Mechanism: completed two-day metal returns in the top 5% of their trailing 300-session
-distribution signal macro/regime repricing. The next reopen continues the trend because
-positioning/hedging executes after the close; only tails are traded, not routine moves.
-Hypothesis: for each metal independently, enter at first 17:00 CT reopen bar after the
-signal day in the direction of the two-day return; hold through next 15:00 CT, $250 stop,
-one contract. Causal rolling quantile only. Pre-screen showed GC/SI/HG all positive and
-multi-metal portfolio positive 13/13 active years.
-Falsification: stressed PnL/era negative or fold pass ~0.
+"""v18n-2 experiment 22. Claimed feed #8058.
+FAMILY: silver_stalled_trend_reversal
+Mechanism: an extreme completed daily SI move that is followed by a near-flat session
+indicates repricing failed to attract continuation; next-session position unwinds reverse it.
+Hypothesis: after an SI top-5% daily move followed by a session whose absolute return is
+less than 10% of initial move, enter opposite stalled-day direction at following 17:00 CT
+reopen; exit 15:00 CT; $250 stop. All state comes from completed sessions.
+Falsification: negative stressed PnL/any era or inadequate positive years.
 """
 import numpy as np
 
-FAMILY = "metals_two_day_extreme_trend_continuation"
-PARAMS = {"quantile": 0.95, "lookback_sessions": 300, "return_sessions": 2, "stop_dollars": 250}
-PV = {"GC": 100.0, "SI": 5000.0, "HG": 25000.0, "PL": 50.0}
-CLOSE_LO, CLOSE_HI = 53400, 54000
-REOPEN_LO, REOPEN_HI = 61200, 61500
-EXIT_SEC = 54000
-
-
-def _plan(df, pv):
-    out = np.zeros(len(df), dtype=np.int64)
-    close, sec = df.close.to_numpy(), df.ct_sec.to_numpy()
-    closes, returns, history = [], [], []
-    for idx in df.groupby("session", sort=False).indices.values():
-        close_bars = [i for i in idx if CLOSE_LO <= sec[i] <= CLOSE_HI]
-        reopen = [i for i in idx if REOPEN_LO <= sec[i] < REOPEN_HI]
-        us_hours = [i for i in idx if 30600 <= sec[i] < EXIT_SEC]
-        signal = None
-        if len(closes) >= PARAMS["return_sessions"] and close_bars:
-            signal = closes[-1] / closes[-PARAMS["return_sessions"]] - 1
-        if close_bars:
-            closes.append(close[close_bars[-1]])
-        if signal is None:
-            continue
-        past = np.abs(history[-PARAMS["lookback_sessions"]:])
-        history.append(signal)
-        if len(past) < PARAMS["lookback_sessions"] or abs(signal) < np.quantile(past, PARAMS["quantile"]):
-            continue
-        bars = reopen + us_hours
-        if len(bars) < 2:
-            continue
-        side, ref = int(np.sign(signal)), close[bars[0]]
-        for i in bars[1:]:
-            if side * (close[i] - ref) <= -PARAMS["stop_dollars"] / pv:
-                break
-            out[i] = side
-    return out
+FAMILY = "silver_stalled_trend_reversal"
+PARAMS = {"quantile": 0.95, "lookback_sessions": 300, "stall_ratio": 0.10, "stop_dollars": 250}
+SI_PV = 5000.0
 
 
 def signals(panel):
-    return {s: (_plan(d, PV[s]) if s in PV else np.zeros(len(d), dtype=np.int64)) for s, d in panel.items()}
+    ans = {s: np.zeros(len(d), dtype=np.int64) for s, d in panel.items()}
+    if "SI" not in panel:
+        return ans
+    df, out = panel["SI"], ans["SI"]
+    close, sec = df.close.to_numpy(), df.ct_sec.to_numpy()
+    prior_close, history, candidate, pending = None, [], 0.0, 0
+    for idx in df.groupby("session", sort=False).indices.values():
+        bars = [i for i in idx if 61200 <= sec[i] < 61500] + [i for i in idx if 30600 <= sec[i] < 54000]
+        if pending and len(bars) > 1:
+            ref = close[bars[0]]
+            for i in bars[1:]:
+                if pending * (close[i] - ref) <= -PARAMS["stop_dollars"] / SI_PV:
+                    break
+                out[i] = pending
+        pending = 0
+        end = [i for i in idx if 53400 <= sec[i] <= 54000]
+        if not end:
+            continue
+        this_close = close[end[-1]]
+        if prior_close is not None:
+            ret = this_close / prior_close - 1
+            # Candidate was established at prior completed close. This close confirms stall.
+            if candidate and abs(ret) < PARAMS["stall_ratio"] * abs(candidate):
+                pending = -int(np.sign(candidate))
+            past = np.abs(history[-PARAMS["lookback_sessions"]:])
+            candidate = ret if len(past) >= PARAMS["lookback_sessions"] and abs(ret) >= np.quantile(past, PARAMS["quantile"]) else 0.0
+            history.append(ret)
+        prior_close = this_close
+    return ans
 
 
 def entry_risk(panel):
-    return {s: np.full(len(d), 290.0 if s in PV else 0.0) for s, d in panel.items()}
+    return {s: np.full(len(d), 290.0 if s == "SI" else 0.0) for s, d in panel.items()}
