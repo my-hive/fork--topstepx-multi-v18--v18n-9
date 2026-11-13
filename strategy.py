@@ -7,7 +7,7 @@ ponytail: close stop not guaranteed $250 fill loss cap; diagnostic, not nominati
 """
 import numpy as np
 import pandas as pd
-FAMILY = "equity-friday-opening-flow-clean-room-audit"
+FAMILY = "equity-friday-cross-index-flow-clean-room-audit"
 PARAMS = {"observe_start":30600,"entry_sec":32400,"exit_sec":50400,"stop_dollars":250}
 
 def signals(panel):
@@ -24,10 +24,10 @@ def signals(panel):
         if len(pre)>1:
             sides[pd.Timestamp(day)] = int(np.sign(c[pre[-1]]-c[pre[0]]))
     for s,d in panel.items():
-        if s!='MNQ':
+        if s!='MES':
             continue
         c,t=d.close.to_numpy(),d.ct_sec.to_numpy()
-        pv=2.0
+        pv=5.0
         for day,g in d.groupby('session',sort=False).indices.items():
             side=sides.get(pd.Timestamp(day),0)
             bars=g[(t[g]>=PARAMS['entry_sec'])&(t[g]<PARAMS['exit_sec'])]
@@ -41,4 +41,4 @@ def signals(panel):
     return out
 
 def entry_risk(panel):
-    return {s:np.full(len(d),250.0 if s=='MNQ' else 0.0) for s,d in panel.items()}
+    return {s:np.full(len(d),250.0 if s=='MES' else 0.0) for s,d in panel.items()}
